@@ -11,10 +11,23 @@ override LDFLAGS += -shared
 TARGET := libtinyeden_fov.so
 SRC    := tinyeden_fov.c
 
+# The Windows build ships as a winmm.dll proxy. The game statically imports
+# winmm, so it loads before the engine and the four functions it actually
+# calls are forwarded to the real one in System32.
+WINCC   ?= x86_64-w64-mingw32-gcc
+WINTARGET := winmm.dll
+WINSRC    := tinyeden_fov_win.c
+
 all: $(TARGET)
 
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< -lpthread
+
+windows: $(WINTARGET)
+
+$(WINTARGET): $(WINSRC)
+	$(WINCC) -O2 -std=gnu11 -Wall -Wextra -shared -o $@ $< \
+		-static-libgcc -lkernel32
 
 # Fails the build if we accidentally pick up a symbol newer than the oldest
 # runtime we care about (Steam Runtime 3 "sniper", glibc 2.31).
@@ -25,7 +38,16 @@ check: $(TARGET)
 	fi; \
 	echo "glibc requirements OK: $$(objdump -T $(TARGET) | grep -oE 'GLIBC_[0-9.]+' | sort -u | tr '\n' ' ')"
 
-clean:
-	rm -f $(TARGET)
+# The forwarded winmm entry points have to be exported under their real
+# names or the game fails to start with a missing-import error.
+wincheck: $(WINTARGET)
+	@for f in timeBeginPeriod timeEndPeriod timeGetTime waveOutGetNumDevs; do \
+		x86_64-w64-mingw32-objdump -p $(WINTARGET) | grep -qw $$f || \
+			{ echo "missing export: $$f"; exit 1; }; \
+	done; \
+	echo "winmm exports OK"
 
-.PHONY: all check clean
+clean:
+	rm -f $(TARGET) $(WINTARGET)
+
+.PHONY: all windows check wincheck clean

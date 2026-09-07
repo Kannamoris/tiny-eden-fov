@@ -2,9 +2,11 @@
 
 An adjustable field of view for [Tiny Eden](https://store.steampowered.com/app/3375110/), which ships without one. Change it while the game is running and the camera follows within a second.
 
-Linux only, including Steam Deck. See [Windows](#windows) below.
+Linux, Steam Deck and Windows.
 
 ## Install
+
+### Linux and Steam Deck
 
 ```sh
 git clone https://github.com/Kannamoris/tiny-eden-fov
@@ -19,6 +21,18 @@ LD_PRELOAD=/path/to/tiny-eden-fov/libtinyeden_fov.so %command%
 ```
 
 On Steam Deck the OS is read only and has no compiler, so download `libtinyeden_fov.so` from the Releases page instead of building, put it anywhere in your home directory, and use the same launch option.
+
+### Windows
+
+Download `winmm.dll` from the Releases page and drop it next to `CGH-Win64-Shipping.exe`, which lives in `Tiny Eden\CGH\Binaries\Win64\` inside your Steam library. Nothing else to set up.
+
+To build it yourself you need mingw-w64 (`make windows`, or `wincheck` to also verify the exports).
+
+Running the Windows build through Proton or Wine works too, but Wine prefers its own winmm, so the launch options need the override:
+
+```
+WINEDLLOVERRIDES="winmm=n,b" %command% -fov=105
+```
 
 ## Use
 
@@ -50,11 +64,13 @@ Environment variables, if you prefer them:
 | `TINY_EDEN_FOV_CAMERAACTORS=1` | also override camera actors, which includes cutscene cameras |
 | `TINY_EDEN_FOV_DEBUG=1` | log the field of view of every camera it finds |
 
-Precedence is `-fov=`, then `TINY_EDEN_FOV`, then the config file.
+Precedence is `-fov=`, then `TINY_EDEN_FOV`, then the config file. The variables work on Windows too, though on Windows there is no convenient place to set one for a Steam launch, so `-fov=` and the file are the practical routes there.
+
+On Windows the same three inputs apply. `-fov=105` goes in the Steam launch options after `%command%` and is passed through the launcher to the game. The live value lives in `tiny_eden_fov.txt` next to the DLL rather than in `~/.config`, and there is no `fov` script: write the number into that file with any editor and the camera follows within a second. The log is `tiny_eden_fov.log` in the same folder.
 
 ## Uninstall
 
-Remove the launch option. Nothing else to undo: the mod never writes to the game's files, so there is nothing for Steam to repair and nothing left behind when it is not preloaded.
+On Linux, remove the launch option. On Windows, delete `winmm.dll` from the game's `Binaries\Win64` folder. Nothing else to undo on either: the mod never modifies the game's own files, so there is nothing for Steam to repair.
 
 ## How it works
 
@@ -72,27 +88,27 @@ Cameras that already exist keep what they were constructed with, so a background
 
 Addresses are found by pattern scan rather than hardcoded, so a game update will normally just keep working.
 
+The Windows build needs a different approach to the same idea. MSVC does not pool the defaults into a constant, it writes each one as an immediate operand, and it lays the class out 16 bytes wider so `FieldOfView` sits at `+0x250`. There is no single constant to rewrite, so the mod patches the immediate in all four places the engine bakes it in: both `UCameraComponent` constructors and the two camera actors that set it on a component they just made. It also matches on shape rather than on bytes, which is sturdier than the Linux pattern: a store of `90.0f` to `+0x250` followed within 96 bytes by a store of `1.7777778f` to `+0x274`. Nothing else in 143 MB of code looks like that. Both constructors independently store the `UCameraComponent` vtable, so the mod requires the two to agree before it trusts the pointer for live retuning.
+
+It ships as `winmm.dll` because the game statically imports winmm, so the proxy is loaded and the default is already patched before the engine builds its first camera. The four functions the game actually calls are forwarded to the real winmm in System32, resolved on first use rather than from `DllMain`, since calling the loader while it holds its own lock is how proxy DLLs deadlock.
+
 ## Troubleshooting
 
-The library logs to stderr, which Steam captures in its console log, or run the game from a terminal to see it directly.
+The library logs to stderr, which Steam captures in its console log, or run the game from a terminal to see it directly. The Windows build also writes `tiny_eden_fov.log` next to the DLL, which is the easier place to look.
 
-`located FOV default at ...` means it found what it needed. `FOV 105.0 (N live cameras retuned)` is a value being applied.
+A line naming the sites it found means it got what it needed. `FOV 105.0 (N live cameras retuned)` is a value being applied. With `TINY_EDEN_FOV_DEBUG=1` it also lists what each camera was set to before, which is the quickest way to tell an inherited default apart from a value the game set deliberately.
 
 ```
 could not locate the camera FOV default; game updated? mod disabled.
 ```
 
-means the pattern no longer matches and the mod did nothing at all, which is the safe outcome. Open an issue with your game build number. The anchors to re-derive are the `AspectRatio = 1.777778f` store in the `UCameraComponent` constructor, `FieldOfView` at object offset `+0x240`, and the vtable immediate stored at the top of that same constructor.
+means the pattern no longer matches and the mod did nothing at all, which is the safe outcome. Open an issue with your game build number. The anchors to re-derive are the `AspectRatio = 1.777778f` store in the `UCameraComponent` constructor, `FieldOfView` at object offset `+0x240` on Linux or `+0x250` on Windows, and the vtable stored at the top of that same constructor.
 
 ## Compatibility
 
 Built against the oldest glibc that matters (2.31, the Steam Linux Runtime) so one binary works on any current distribution. `make check` fails the build if a newer symbol sneaks in.
 
-Verified on game build 25169107, Unreal Engine 5.8, native Linux binary. Single player game, no anti-cheat.
-
-## Windows
-
-Not supported. The technique ports directly, but the Windows build is compiled by a different compiler, so the byte pattern above does not match and the injection method is different: a proxy DLL or something like UE4SS rather than `LD_PRELOAD`. Contributions welcome.
+Verified on game build 25169107, Unreal Engine 5.8, on both the native Linux binary and the Windows binary under Proton. Single player game, no anti-cheat.
 
 ## License
 
