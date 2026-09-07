@@ -7,7 +7,7 @@ Linux only, including Steam Deck. See [Windows](#windows) below.
 ## Install
 
 ```sh
-git clone https://github.com/YOURNAME/tiny-eden-fov
+git clone https://github.com/Kannamoris/tiny-eden-fov
 cd tiny-eden-fov
 ./install.sh
 ```
