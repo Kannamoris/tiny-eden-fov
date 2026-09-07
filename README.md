@@ -66,7 +66,13 @@ Environment variables, if you prefer them:
 
 Precedence is `-fov=`, then `TINY_EDEN_FOV`, then the config file. The variables work on Windows too, though on Windows there is no convenient place to set one for a Steam launch, so `-fov=` and the file are the practical routes there.
 
-On Windows the same three inputs apply. `-fov=105` goes in the Steam launch options after `%command%` and is passed through the launcher to the game. The live value lives in `tiny_eden_fov.txt` next to the DLL rather than in `~/.config`, and there is no `fov` script: write the number into that file with any editor and the camera follows within a second. The log is `tiny_eden_fov.log` in the same folder.
+On Windows the same three inputs apply. The whole of the Steam launch options is just this, with no `%command%` and nothing else:
+
+```
+-fov=105
+```
+
+Steam appends it to the game's arguments, and the launcher passes it through to the game. The live value lives in `tiny_eden_fov.txt` next to the DLL rather than in `~/.config`, and there is no `fov` script: write the number into that file with any editor and the camera follows within a second. The log is `tiny_eden_fov.log` in the same folder.
 
 ## Uninstall
 
