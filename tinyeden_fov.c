@@ -148,15 +148,40 @@ static unsigned long parse_ulong(const char *s)
     return v;
 }
 
+/*
+ * Everything is said twice: to stderr, which Steam swallows into its console
+ * log, and to a file in the user's home, which is somewhere a Steam Deck
+ * owner can actually reach without a terminal.
+ */
 static void note(const char *fmt, ...)
 {
+    char line[512];
     va_list ap;
+    int n;
+
+    n = snprintf(line, sizeof(line), "[tinyeden-fov] ");
     va_start(ap, fmt);
-    fputs("[tinyeden-fov] ", stderr);
-    vfprintf(stderr, fmt, ap);
-    fputc('\n', stderr);
-    fflush(stderr);
+    n += vsnprintf(line + n, sizeof(line) - (size_t)n - 2, fmt, ap);
     va_end(ap);
+    if (n < 0) return;
+    if (n > (int)sizeof(line) - 2) n = (int)sizeof(line) - 2;
+    line[n++] = '\n';
+
+    fwrite(line, 1, (size_t)n, stderr);
+    fflush(stderr);
+
+    {
+        const char *home = getenv("HOME");
+        char path[512];
+        int fd;
+
+        if (!home || !*home) return;
+        snprintf(path, sizeof(path), "%s/.config/tiny-eden-fov.log", home);
+        fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd < 0) return;
+        (void)!write(fd, line, (size_t)n);
+        close(fd);
+    }
 }
 
 /* ------------------------------------------------------------- process maps */

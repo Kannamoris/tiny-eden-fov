@@ -33,4 +33,7 @@ Built $DIR/libtinyeden_fov.so
    $DIR/fov 105
 
 The game's own value is 90. Delete the launch option to turn the mod off.
+
+It logs to ~/.config/tiny-eden-fov.log, so if that file never appears the
+library was not preloaded and the path above is wrong.
 TXT
