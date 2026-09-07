@@ -1,0 +1,23 @@
+#!/bin/sh
+# Set the Tiny Eden field of view. Takes effect immediately if the game is running.
+set -e
+CFG="${TINY_EDEN_FOV_FILE:-$HOME/.config/tiny-eden-fov}"
+
+if [ $# -eq 0 ]; then
+    if [ -f "$CFG" ]; then
+        printf 'current: %s\n' "$(cat "$CFG")"
+    else
+        printf 'current: 90 (unset, game default)\n'
+    fi
+    printf 'usage: %s <40-170>\n' "$0"
+    exit 0
+fi
+
+case "$1" in
+    ''|*[!0-9.]*) echo "fov: '$1' is not a number" >&2; exit 1 ;;
+esac
+awk -v v="$1" 'BEGIN { exit !(v >= 40 && v <= 170) }' || { echo "fov: $1 out of range 40-170" >&2; exit 1; }
+
+mkdir -p "$(dirname "$CFG")"
+printf '%s\n' "$1" > "$CFG"
+echo "FOV set to $1"
