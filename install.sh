@@ -23,11 +23,12 @@ cat <<TXT
 
 Built $DIR/libtinyeden_fov.so
 
-1. In Steam, right click Tiny Eden, Properties, General, Launch Options, paste:
+1. In Steam, right click Tiny Eden, Properties, General, Launch Options, paste
+   this, with the field of view you want on the end:
 
-   LD_PRELOAD=$DIR/libtinyeden_fov.so %command%
+   LD_PRELOAD=$DIR/libtinyeden_fov.so %command% -fov=105
 
-2. Set your field of view any time, including while the game is running:
+2. Or change it any time, including while the game is running:
 
    $DIR/fov 105
 

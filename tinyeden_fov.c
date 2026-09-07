@@ -57,6 +57,7 @@
 static float   *g_fov_const;
 static uint64_t g_vtable;
 static float    g_applied;
+static float    g_last_file;   /* last value seen in the config file */
 static float    g_seen[16];
 static int      g_nseen;
 
@@ -410,6 +411,52 @@ static float parse_fov(const char *s)
     return v;
 }
 
+/*
+ * Look for -fov=N (or --fov=N) in the game's own command line, which is where
+ * anything appended after %command% in Steam's launch options ends up.
+ *
+ * Only the -fov=N form is accepted. A bare "-fov 105" would leave 105 sitting
+ * on the command line as a lone token, and Unreal treats the first such token
+ * after the project name as a map to open, which breaks the boot.
+ */
+static float read_cmdline(void)
+{
+    FILE *f = fopen("/proc/self/cmdline", "rb");
+    if (!f)
+        return 0.0f;
+
+    char buf[8192];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    if (n == 0)
+        return 0.0f;
+    buf[n] = '\0';
+
+    float found = 0.0f;
+    for (size_t i = 0; i < n; ) {
+        const char *arg = buf + i;
+        size_t len = strlen(arg);
+
+        const char *val = NULL;
+        if (strncmp(arg, "-fov=", 5) == 0)
+            val = arg + 5;
+        else if (strncmp(arg, "--fov=", 6) == 0)
+            val = arg + 6;
+        else if (strcmp(arg, "-fov") == 0 || strcmp(arg, "--fov") == 0)
+            note("use -fov=N, not '%s N' (Unreal would read the bare number as a map name)", arg);
+
+        if (val) {
+            float v = parse_fov(val);
+            if (v == 0.0f)
+                note("%s ignored (want %.0f-%.0f)", arg, (double)FOV_MIN, (double)FOV_MAX);
+            else
+                found = v;
+        }
+        i += len + 1;
+    }
+    return found;
+}
+
 static float read_config(void)
 {
     char path[4096], buf[64];
@@ -449,8 +496,10 @@ static void *watcher(void *unused)
         struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
         nanosleep(&ts, NULL);
         float v = read_config();
-        if (v != 0.0f)
+        if (v != 0.0f && v != g_last_file) {
+            g_last_file = v;
             apply(v);
+        }
     }
     return NULL;
 }
@@ -476,20 +525,24 @@ static void tinyeden_fov_init(void)
     if (locate() != 0)
         return;
 
-    float fov = 0.0f;
+    /* Whatever the file says now is the baseline: the watcher reacts to changes
+       from here on, so it will not immediately overwrite a launch-option value. */
+    g_last_file = read_config();
+
+    float fov = read_cmdline();
     const char *env = getenv("TINY_EDEN_FOV");
-    if (env && *env) {
+    if (fov == 0.0f && env && *env) {
         fov = parse_fov(env);
         if (fov == 0.0f)
             note("TINY_EDEN_FOV=%s ignored (want %.0f-%.0f)", env, (double)FOV_MIN, (double)FOV_MAX);
     }
     if (fov == 0.0f)
-        fov = read_config();
+        fov = g_last_file;
 
     if (fov != 0.0f)
         apply(fov);
     else
-        note("no FOV set; game stays at 90 (write one to ~/.config/tiny-eden-fov)");
+        note("no FOV set; game stays at 90 (append -fov=100 to the launch options, or run fov 100)");
 
     const char *live = getenv("TINY_EDEN_FOV_LIVE");
     if (!live || strcmp(live, "0") != 0) {

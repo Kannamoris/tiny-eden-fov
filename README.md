@@ -22,21 +22,35 @@ On Steam Deck the OS is read only and has no compiler, so download `libtinyeden_
 
 ## Use
 
+Set it once, in the launch options, by appending `-fov=` and the value you want:
+
+```
+LD_PRELOAD=/path/to/tiny-eden-fov/libtinyeden_fov.so %command% -fov=105
+```
+
+Or change it any time, including with the game running, and the camera follows within a second:
+
 ```sh
 ./fov 105     # set the field of view
 ./fov         # show the current value
 ```
 
-The game's own value is 90. Useful range is roughly 90 to 115; much above that starts to look like a fisheye lens, especially on ultrawide. The value is stored in `~/.config/tiny-eden-fov` and applies immediately if the game is running, so you can tune it with the game in front of you.
+The game's own value is 90. Useful range is roughly 90 to 115; much above that starts to look like a fisheye lens, especially on ultrawide.
+
+Use `-fov=105`, not `-fov 105`. Unreal reads the first bare token on the command line as a map to open, so a detached number breaks the boot. The mod says so rather than letting you find out the hard way.
+
+The value from `./fov` is stored in `~/.config/tiny-eden-fov`. A launch option wins at startup, and then the file takes over the moment you actually change it, so the two work together: put your normal value in the launch options and still tune live when you feel like it.
 
 Environment variables, if you prefer them:
 
 | Variable | Effect |
 | --- | --- |
-| `TINY_EDEN_FOV=105` | use this value for one launch, ignoring the config file |
+| `TINY_EDEN_FOV=105` | same as `-fov=105`, for launchers that pass environment rather than arguments |
 | `TINY_EDEN_FOV_LIVE=0` | apply at startup only, no live updates |
 | `TINY_EDEN_FOV_CAMERAACTORS=1` | also override camera actors, which includes cutscene cameras |
 | `TINY_EDEN_FOV_DEBUG=1` | log the field of view of every camera it finds |
+
+Precedence is `-fov=`, then `TINY_EDEN_FOV`, then the config file.
 
 ## Uninstall
 
