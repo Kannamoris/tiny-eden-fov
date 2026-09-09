@@ -159,6 +159,7 @@ For launchers that pass environment rather than arguments, and for a couple of t
 | `TINY_EDEN_FOV=105` | same as `-fov=105` |
 | `TINY_EDEN_FOV_LIVE=0` | apply at startup only, no live updates |
 | `TINY_EDEN_FOV_CAMERAACTORS=1` | also override camera actors, which includes cutscene cameras |
+| `TINY_EDEN_FOV_DIALOG=0` | leave the dialogue zoom alone, so the FOV resets after talking to an NPC |
 | `TINY_EDEN_FOV_DEBUG=1` | log what every camera it finds was set to |
 
 Precedence is `-fov=`, then `TINY_EDEN_FOV`, then the saved value.
