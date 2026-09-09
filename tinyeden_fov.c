@@ -27,6 +27,14 @@
  * writes the new FieldOfView into each. That makes the config file behave like
  * a slider: change it while the game runs and the view follows within a second.
  *
+ * Dialogue reset
+ * --------------
+ * Talking to an NPC runs GA_OpenDialog, the one asset in the game that touches
+ * FOV at all. It eases the camera in while the dialogue box is up, then eases
+ * it back out to a hard coded 90 -- the engine default it was authored against
+ * -- which overwrites whatever this mod set, and nothing ever puts it back. See
+ * hook_setfov below for the fix.
+ *
  * Usage
  * -----
  *   Steam launch options:
@@ -36,6 +44,7 @@
  *
  *   TINY_EDEN_FOV=100     set the FOV for one launch, ignoring the file
  *   TINY_EDEN_FOV_LIVE=0  disable the live-update thread
+ *   TINY_EDEN_FOV_DIALOG=0  leave the dialogue zoom alone (FOV will reset)
  */
 
 #include <errno.h>
@@ -53,6 +62,7 @@
 #define FOV_MIN 40.0f
 #define FOV_MAX 170.0f
 #define FIELDOFVIEW_OFFSET 0x240
+#define ENGINE_FOV 90.0f    /* UCameraComponent's own default, and what the content resets to */
 
 static float   *g_fov_const;
 static uint64_t g_vtable;
@@ -323,6 +333,205 @@ static int write_ro(void *addr, const void *src, size_t len, int restore)
     return 0;
 }
 
+/* --------------------------------------------------- dialogue FOV reset */
+
+/*
+ * GA_OpenDialog, the gameplay ability behind "talk to an NPC", is the only
+ * thing in the shipped content that ever calls SetFieldOfView. It eases the
+ * camera in while the dialogue box is up and then eases it back out to a
+ * literal 90 -- the engine default the ability was authored against, and the
+ * one number this mod exists to change. The way back out therefore lands the
+ * camera on 90 and leaves it there: the FOV looks reset, and rewriting the
+ * component afterwards does nothing visible because the ability has already
+ * had the last word.
+ *
+ * UCameraComponent::SetFieldOfView is virtual (the blueprint thunk reaches it
+ * through the vtable), so it can be replaced wholesale. The replacement leaves
+ * the way in untouched -- the zoom should still look like a zoom -- and
+ * stretches the way back out from the range the ability thinks it is working
+ * in, which ends at 90, into ours, which ends at the configured FOV. A short
+ * idle check then pins the exact value, in case the ability drives the easing
+ * from the camera's own FieldOfView rather than from a counter of its own and
+ * so stops a little short.
+ */
+
+static void (*g_orig_setfov)(void *self, float fov);
+static void **g_setfov_slot;
+
+/* One in-flight easing per camera; the game only ever animates one, but a
+   handful of slots costs nothing and keeps a stale entry from mattering. */
+struct seq {
+    void     *obj;
+    float     low;      /* lowest FOV this excursion has asked for */
+    float     last;     /* previous requested FOV, to tell the two legs apart */
+    int       rising;   /* currently on the way back out */
+    long long t_ms;
+};
+static struct seq g_seq[8];
+
+static long long now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static struct seq *seq_for(void *obj)
+{
+    struct seq *oldest = &g_seq[0];
+
+    for (int i = 0; i < 8; i++) {
+        if (g_seq[i].obj == obj)
+            return &g_seq[i];
+        if (g_seq[i].t_ms < oldest->t_ms)
+            oldest = &g_seq[i];
+    }
+    oldest->obj = obj;
+    oldest->low = 0.0f;
+    oldest->last = 0.0f;
+    oldest->rising = 0;
+    return oldest;
+}
+
+static int g_dialog_debug;
+
+static void hook_setfov(void *self, float want)
+{
+    float f = g_applied;
+    float out = want;
+
+    if (f > 0.0f) {
+        float cur = *(float *)((char *)self + FIELDOFVIEW_OFFSET);
+        struct seq *s = seq_for(self);
+
+        /* Resting on our value means whatever comes next starts a new
+           excursion. Mid-easing the camera is wherever we last put it. */
+        if (!s->rising && cur == f) {
+            s->low = cur;
+            s->last = cur;
+        }
+        if (want < s->low)
+            s->low = want;
+
+        if (want > s->last) {
+            /* The way back out. Stretch it only when there is a range to
+               stretch: an easing that never went below 90 has nothing to
+               rescale, and gets pinned by the idle check instead. */
+            if (s->low < ENGINE_FOV) {
+                out = s->low + (want - s->low) * ((f - s->low) / (ENGINE_FOV - s->low));
+                if ((f > s->low && out > f) || (f < s->low && out < f))
+                    out = f;
+                /* Never ease slower than the ability expects. Narrowing the
+                   FOV compresses this leg, and an ability that drives the
+                   easing from the camera's own FieldOfView would then never
+                   see it reach 90 and would keep going. Below 90 the idle
+                   check does the work instead. */
+                if (out < want)
+                    out = want;
+            }
+            s->rising = 1;
+        } else if (want < s->last) {
+            s->rising = 0;
+        }
+        /* An exact 90 is the literal the ability resets to, however it got
+           there, so treat it as the end of the excursion either way. */
+        if (want == ENGINE_FOV && f != ENGINE_FOV)
+            s->rising = 1;
+        s->last = want;
+        s->t_ms = now_ms();
+
+        if (g_dialog_debug)
+            note("SetFieldOfView %.2f -> %.2f (was %.2f, low %.2f, %s)",
+                 (double)want, (double)out, (double)cur, (double)s->low,
+                 s->rising ? "easing out" : "easing in");
+    }
+
+    g_orig_setfov(self, out);
+}
+
+/* Called from the watcher: an easing that stopped short of the configured FOV
+   gets pinned to it once the ability has stopped writing. The component may
+   have been destroyed in the meantime, so its vtable is checked first, through
+   /proc/self/mem so that a freed address reports EIO instead of faulting. */
+static void settle_sequences(void)
+{
+    long long now = now_ms();
+    float f = g_applied;
+    int fd = -1;
+
+    for (int i = 0; i < 8; i++) {
+        struct seq *s = &g_seq[i];
+        uint64_t vt;
+        float cur;
+
+        if (!s->rising || !s->obj || now - s->t_ms < 200)
+            continue;
+        s->rising = 0;
+        if (f <= 0.0f)
+            continue;
+        if (fd < 0 && (fd = open("/proc/self/mem", O_RDWR)) < 0)
+            return;
+
+        if (pread(fd, &vt, sizeof(vt), (off_t)(uintptr_t)s->obj) != (ssize_t)sizeof(vt))
+            continue;
+        if (vt != g_vtable)
+            continue;
+        off_t at = (off_t)((uintptr_t)s->obj + FIELDOFVIEW_OFFSET);
+        if (pread(fd, &cur, sizeof(cur), at) != (ssize_t)sizeof(cur) || cur == f)
+            continue;
+        if (pwrite(fd, &f, sizeof(f), at) == (ssize_t)sizeof(f) && g_dialog_debug)
+            note("dialogue easing settled at %.2f, pinned to %.1f",
+                 (double)cur, (double)f);
+    }
+    if (fd >= 0)
+        close(fd);
+}
+
+/*
+ * UCameraComponent::SetFieldOfView is the whole of "movss [rdi+0x240], xmm0;
+ * ret", so the vtable slot holding it can be found by what it points at rather
+ * than by a hardcoded index, which keeps this working across game updates.
+ */
+static int install_setfov_hook(void)
+{
+    static const unsigned char body[] = {
+        0xf3, 0x0f, 0x11, 0x87, 0x40, 0x02, 0x00, 0x00, 0xc3
+    };
+    struct range r[64];
+    int n, slot = -1;
+    void **vt = (void **)(uintptr_t)g_vtable;
+    void *hook = (void *)hook_setfov;
+
+    if (!g_vtable)
+        return -1;
+    n = exec_ranges(r, 64);
+    if (n == 0)
+        return -1;
+
+    for (int i = 0; i < 512 && slot < 0; i++) {
+        uintptr_t fn = (uintptr_t)vt[i];
+        for (int k = 0; k < n; k++) {
+            if (fn < r[k].lo || fn + sizeof(body) > r[k].hi)
+                continue;
+            if (memcmp((const void *)fn, body, sizeof(body)) == 0)
+                slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        note("SetFieldOfView not found in the camera vtable; "
+             "FOV will reset after talking to an NPC");
+        return -1;
+    }
+
+    g_orig_setfov = (void (*)(void *, float))vt[slot];
+    g_setfov_slot = &vt[slot];
+    if (write_ro(g_setfov_slot, &hook, sizeof(hook), PROT_READ) != 0)
+        return -1;
+    note("dialogue FOV reset hooked (vtable slot %d -> %p)", slot, (void *)g_orig_setfov);
+    return 0;
+}
+
 /*
  * Write fov into every live UCameraComponent.
  *
@@ -517,9 +726,14 @@ static void apply(float fov)
 static void *watcher(void *unused)
 {
     (void)unused;
-    for (;;) {
-        struct timespec ts = { .tv_sec = 1, .tv_nsec = 0 };
+    /* Ten ticks a second: the config file only needs looking at once a second,
+       but a dialogue easing has to be pinned promptly enough not to be seen. */
+    for (int tick = 0; ; tick++) {
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 100 * 1000 * 1000 };
         nanosleep(&ts, NULL);
+        settle_sequences();
+        if (tick % 10)
+            continue;
         float v = read_config();
         if (v != 0.0f && v != g_last_file) {
             g_last_file = v;
@@ -549,6 +763,14 @@ static void tinyeden_fov_init(void)
         return;
     if (locate() != 0)
         return;
+
+    {
+        const char *dbg = getenv("TINY_EDEN_FOV_DEBUG");
+        const char *dlg = getenv("TINY_EDEN_FOV_DIALOG");
+        g_dialog_debug = dbg && strcmp(dbg, "0") != 0;
+        if (!dlg || strcmp(dlg, "0") != 0)
+            install_setfov_hook();
+    }
 
     /* Whatever the file says now is the baseline: the watcher reacts to changes
        from here on, so it will not immediately overwrite a launch-option value. */
