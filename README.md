@@ -1,6 +1,9 @@
 # Tiny Eden FOV
 
-An adjustable field of view for [Tiny Eden](https://store.steampowered.com/app/3375110/), which ships without one. Change it while the game is running and the camera follows within a second.
+> [!IMPORTANT]
+> **This tool is redundant and the repository is archived.** As of [update #4](https://store.steampowered.com/news/app/3375110/view/719041721925632451), Tiny Eden has its own field of view setting, so use that instead. The instructions below are kept for reference only and are no longer maintained.
+
+An adjustable field of view for [Tiny Eden](https://store.steampowered.com/app/3375110/), which shipped without one. Change it while the game is running and the camera follows within a second.
 
 Pick your platform below and follow it top to bottom. Each one is complete on its own, so there is nothing else to read first.
 
@@ -174,7 +177,7 @@ WINEDLLOVERRIDES="winmm=n,b" %command% -fov=105
 
 ## How it works
 
-Tiny Eden has no field of view setting because nothing in the game ever *sets* a field of view. Across all 11959 cooked packages in the shipped container, no asset references `FieldOfView` or `SetFieldOfView`, so every camera runs at the Unreal Engine default of 90 degrees that `UCameraComponent`'s constructor writes. On Linux that default is a single 16-byte constant in `.rodata`:
+Before update #4, Tiny Eden had no field of view setting because nothing in the game ever *set* a field of view. Across all 11959 cooked packages in the shipped container, no asset references `FieldOfView` or `SetFieldOfView`, so every camera runs at the Unreal Engine default of 90 degrees that `UCameraComponent`'s constructor writes. On Linux that default is a single 16-byte constant in `.rodata`:
 
 ```asm
 mov    dword [rbx+0x264], 1.777778     ; AspectRatio
